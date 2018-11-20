@@ -64,14 +64,20 @@ release can be NULL.*/
 
 ssize_t queue_read(struct file *filp, char __user *buf, size_t count,
                    loff_t *f_pos)
-{}
+{
+	// When reading from the queue, entries in the queue will behave as concatenated strings.}
 
 ssize_t queue_write(struct file *filp, const char __user *buf, size_t count,
                     loff_t *f_pos)
-{}
+{
+	// Writing to a queue device will insert the written text to the end of the queue.
+}
 
 long queue_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
-{}
+{
+	// There will be an ioctl command named "pop" which will return the entry at the front of the queue and remove it from the queue.
+	
+}
 
 loff_t queue_llseek(struct file *filp, loff_t off, int whence)
 {
