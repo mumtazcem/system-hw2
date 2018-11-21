@@ -41,7 +41,7 @@ struct node{
 
 struct queue_dev {
     struct node *front, *back;
-    unsigned long size;
+    size_t size_of_data;
     struct semaphore sem;
     struct cdev cdev;
     /*struct cdev is the kernel’s internal structure that represents char devices; this
@@ -64,6 +64,7 @@ int delete_queue(struct queue_dev *dev)
 				temp = NULL;
 		}
     }
+    size_of_data = 0;
     return 0;
 }
 
@@ -88,23 +89,95 @@ int queue_release(struct inode *inode, struct file *filp)
 ssize_t queue_read(struct file *filp, char __user *buf, size_t count,
                    loff_t *f_pos)
 {
-	// When reading from the queue, entries in the queue will behave as concatenated strings.}
+	// When reading from the queue, entries in the queue will behave as concatenated strings.
+	struct node *temp = kmalloc(sizeof(struct node), GFP_KERNEL);
+	struct queue_dev *dev = filp->private_data;
+	char *concatenated = kmalloc(dev->size_of_data * sizeof(char), GFP_KERNEL);
+	ssize_t retval = 0;
+	if (down_interruptible(&dev->sem))
+        return -ERESTARTSYS;
+	// copy data
+	size_t destination_size = sizeof(dev->front->data);
+	temp->data = kmalloc(destination_size * sizeof(char), GFP_KERNEL);
+	strncpy(temp->data, dev->front->data, destination_size);
+	temp->next = dev->front->next;
+	
+	// concatenate strings
+	if (temp){
+		// front is copied
+		strcpy (concatenated, temp->data);
+		printk(KERN_ALERT "Copied data is %s\n", temp->data); 
+	}
+	else{
+		printk(KERN_ALERT "QUEUE IS EMPTY, CAN NOT READ..\n");
+		retval = -EFAULT;
+        goto out;
+	}
+	temp = temp->next;
+	while(temp){
+		strcat (str, temp->data);
+		printk(KERN_ALERT "Copied data is %s\n", temp->data); 
+		temp = temp->next;
+	}
+	
+	if (copy_to_user(buf, concatenated, dev->size_of_data)) {
+        retval = -EFAULT;
+        goto out;
+    }
+	
+	out:
+    up(&dev->sem);
+    return retval;
+}
 
 ssize_t queue_write(struct file *filp, const char __user *buf, size_t count,
                     loff_t *f_pos)
 {
 	// Writing to a queue device will insert the written text to the end of the queue.
-	 struct queue_dev *dev = filp->private_data;
+	struct node *temp = kmalloc(sizeof(struct node));
+	struct queue_dev *dev = filp->private_data;
     ssize_t retval = -ENOMEM;
-
     if (down_interruptible(&dev->sem))
-       
+       return -ERESTARTSYS;
+    
+    // allocation
+    temp->data = kmalloc(count * sizeof(char), GFP_KERNEL);
+    // memset(temp->data, 0, count * sizeof(char));  NOT SURE IF NECESSARY
+    temp->next = NULL;
+    // check if it is successful.
+    if (!temp->data){
+		printk(KERN_ALERT "temp->data kmalloc error..\n");
+        goto out;
+	}
+    // copy buf into temp->data
+    if (copy_from_user(temp->data, buf, count)) {
+		printk(KERN_ALERT "copy_from_user error..\n");
+        retval = -EFAULT;
+        goto out;
+    }
+    printk(KERN_ALERT "Copied data is %s\n", temp->data);        
+    if (dev->front == NULL){
+		// first element
+		printk(KERN_ALERT "First element in the queue..\n");
+		dev->front = temp;
+		dev->back = temp;
+	}
+	else {
+		// write it to the end of the queue
+		printk(KERN_ALERT "writing to the end of the queue..\n");
+		dev->back->next = temp;
+		dev->back = dev->back->next;
+	}
+    size_of_data += count;
+    out:
+    up(&dev->sem);
+    return retval;
 }
 
 long queue_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 {
 	// There will be an ioctl command named "pop" which will return the entry at the front of the queue and remove it from the queue.
-	
+	return 0;
 }
 
 loff_t queue_llseek(struct file *filp, loff_t off, int whence)
@@ -112,6 +185,7 @@ loff_t queue_llseek(struct file *filp, loff_t off, int whence)
 	/* i think it is not necessary:
 	The llseek method is used to change the current read/write position in a file, and
 the new position is returned as a (positive) return value*/
+	return 0;
 }
 
 struct file_operations queue_fops = {
@@ -179,6 +253,7 @@ int queue_init_module(void)
         dev = &queue_devices[i];
         dev->front = NULL;       
         dev->back = NULL;
+        dev->size_of_data = 0;
         sema_init(&dev->sem,1);
         devno = MKDEV(hw2_major, hw2_minor + i);
         cdev_init(&dev->cdev, &hw2_fops);
