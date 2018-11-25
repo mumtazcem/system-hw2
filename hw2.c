@@ -19,7 +19,7 @@
 
 // default values
 #define HW2_MAJOR 0
-#define HW2_NR_DEVS 0
+#define HW2_NR_DEVS 2
 
 int hw2_major = HW2_MAJOR;
 int hw2_minor = 0;
@@ -37,7 +37,7 @@ MODULE_LICENSE("Dual BSD/GPL");
 struct node{
 	char *data;
 	struct node *next;
-}
+};
 
 struct queue_dev {
     struct node *front, *back;
@@ -64,7 +64,7 @@ int delete_queue(struct queue_dev *dev)
 				temp = NULL;
 		}
     }
-    size_of_data = 0;
+    dev->size_of_data = 0;
     return 0;
 }
 
@@ -90,14 +90,18 @@ ssize_t queue_read(struct file *filp, char __user *buf, size_t count,
                    loff_t *f_pos)
 {
 	// When reading from the queue, entries in the queue will behave as concatenated strings.
-	struct node *temp = kmalloc(sizeof(struct node), GFP_KERNEL);
+	struct node *temp;
 	struct queue_dev *dev = filp->private_data;
-	char *concatenated = kmalloc(dev->size_of_data * sizeof(char), GFP_KERNEL);
+	size_t destination_size;
+	char *concatenated;
 	ssize_t retval = 0;
 	if (down_interruptible(&dev->sem))
         return -ERESTARTSYS;
+	printk(KERN_ALERT "In queue_read\n"); 
+    temp = kmalloc(sizeof(struct node), GFP_KERNEL); 
+    concatenated = kmalloc(dev->size_of_data * sizeof(char), GFP_KERNEL);
 	// copy data
-	size_t destination_size = sizeof(dev->front->data);
+	destination_size = sizeof(dev->front->data);
 	temp->data = kmalloc(destination_size * sizeof(char), GFP_KERNEL);
 	strncpy(temp->data, dev->front->data, destination_size);
 	temp->next = dev->front->next;
@@ -106,7 +110,7 @@ ssize_t queue_read(struct file *filp, char __user *buf, size_t count,
 	if (temp){
 		// front is copied
 		strcpy (concatenated, temp->data);
-		printk(KERN_ALERT "Copied data is %s\n", temp->data); 
+		printk(KERN_ALERT "Read data is %s\n", temp->data); 
 	}
 	else{
 		printk(KERN_ALERT "QUEUE IS EMPTY, CAN NOT READ..\n");
@@ -115,8 +119,8 @@ ssize_t queue_read(struct file *filp, char __user *buf, size_t count,
 	}
 	temp = temp->next;
 	while(temp){
-		strcat (str, temp->data);
-		printk(KERN_ALERT "Copied data is %s\n", temp->data); 
+		strcat (concatenated, temp->data);
+		printk(KERN_ALERT "Concatenated data is %s\n", temp->data); 
 		temp = temp->next;
 	}
 	
@@ -134,14 +138,17 @@ ssize_t queue_write(struct file *filp, const char __user *buf, size_t count,
                     loff_t *f_pos)
 {
 	// Writing to a queue device will insert the written text to the end of the queue.
-	struct node *temp = kmalloc(sizeof(struct node));
+	struct node *temp;
 	struct queue_dev *dev = filp->private_data;
+	int flag;
     ssize_t retval = -ENOMEM;
     if (down_interruptible(&dev->sem))
        return -ERESTARTSYS;
     
+	printk(KERN_ALERT "In queue_write\n");
     // allocation
-    temp->data = kmalloc(count * sizeof(char), GFP_KERNEL);
+    temp = kmalloc(sizeof(struct node), GFP_KERNEL);
+    temp->data = kmalloc(count+1 * sizeof(char), GFP_KERNEL);
     // memset(temp->data, 0, count * sizeof(char));  NOT SURE IF NECESSARY
     temp->next = NULL;
     // check if it is successful.
@@ -149,8 +156,12 @@ ssize_t queue_write(struct file *filp, const char __user *buf, size_t count,
 		printk(KERN_ALERT "temp->data kmalloc error..\n");
         goto out;
 	}
+	printk(KERN_ALERT "The buffer is %s\n", buf);
+	printk(KERN_ALERT "Its count is %d\n", count);
     // copy buf into temp->data
-    if (copy_from_user(temp->data, buf, count)) {
+    flag = copy_from_user(temp->data, buf, count);
+    printk(KERN_ALERT "copy_from_user flag value is: %d ..\n", flag);
+    if (flag) {
 		printk(KERN_ALERT "copy_from_user error..\n");
         retval = -EFAULT;
         goto out;
@@ -159,16 +170,24 @@ ssize_t queue_write(struct file *filp, const char __user *buf, size_t count,
     if (dev->front == NULL){
 		// first element
 		printk(KERN_ALERT "First element in the queue..\n");
+		dev->front = kmalloc(sizeof(struct node), GFP_KERNEL);
+		dev->front->next = NULL;
+		dev->front->data = NULL;
+		dev->back = kmalloc(sizeof(struct node), GFP_KERNEL);
+		dev->back->next = NULL;
+		dev->back->data = NULL;
 		dev->front = temp;
 		dev->back = temp;
 	}
 	else {
 		// write it to the end of the queue
 		printk(KERN_ALERT "writing to the end of the queue..\n");
+		dev->back->next = kmalloc(sizeof(struct node), GFP_KERNEL);
 		dev->back->next = temp;
 		dev->back = dev->back->next;
 	}
-    size_of_data += count;
+    dev->size_of_data += count;
+    printk(KERN_ALERT "size of data is now : %d \n", dev->size_of_data);
     out:
     up(&dev->sem);
     return retval;
@@ -230,6 +249,7 @@ int queue_init_module(void)
                                      "queue");
         hw2_major = MAJOR(devno);
     }
+    printk(KERN_WARNING "queue: major number is %d\n", hw2_major);
     if (result < 0) {
         printk(KERN_WARNING "queue: can't get major %d\n", hw2_major);
         return result;
@@ -256,9 +276,9 @@ int queue_init_module(void)
         dev->size_of_data = 0;
         sema_init(&dev->sem,1);
         devno = MKDEV(hw2_major, hw2_minor + i);
-        cdev_init(&dev->cdev, &hw2_fops);
+        cdev_init(&dev->cdev, &queue_fops);
         dev->cdev.owner = THIS_MODULE;
-        dev->cdev.ops = &scull_fops;
+        dev->cdev.ops = &queue_fops;
         err = cdev_add(&dev->cdev, devno, 1);
         if (err)
             printk(KERN_NOTICE "Error %d adding queue%d", err, i);
