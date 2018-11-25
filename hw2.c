@@ -92,24 +92,32 @@ ssize_t queue_read(struct file *filp, char __user *buf, size_t count,
 	// When reading from the queue, entries in the queue will behave as concatenated strings.
 	struct node *temp;
 	struct queue_dev *dev = filp->private_data;
-	size_t destination_size;
+	size_t destination_size, tempSize;
+	int flag;
 	char *concatenated;
 	ssize_t retval = 0;
 	if (down_interruptible(&dev->sem))
         return -ERESTARTSYS;
 	printk(KERN_ALERT "In queue_read\n"); 
     temp = kmalloc(sizeof(struct node), GFP_KERNEL); 
-    concatenated = kmalloc(dev->size_of_data * sizeof(char), GFP_KERNEL);
+    concatenated = kmalloc((dev->size_of_data+1) * sizeof(char), GFP_KERNEL);
 	// copy data
-	destination_size = sizeof(dev->front->data);
-	temp->data = kmalloc(destination_size * sizeof(char), GFP_KERNEL);
-	strncpy(temp->data, dev->front->data, destination_size);
+	destination_size = strlen(dev->front->data);
+	if (*f_pos >= dev->size_of_data) {
+        retval = 0;
+        goto out;
+    }
+	printk(KERN_ALERT "destination_size is: %d \n", destination_size);
+	printk(KERN_ALERT "dev->front->data data is %s\n", dev->front->data); 
+	temp->data = kmalloc((destination_size+1) * sizeof(char), GFP_KERNEL);
+	strncpy(temp->data, dev->front->data, destination_size+1);
 	temp->next = dev->front->next;
 	
 	// concatenate strings
 	if (temp){
 		// front is copied
-		strcpy (concatenated, temp->data);
+		tempSize = strlen(temp->data);
+		strncpy(concatenated, temp->data, tempSize);
 		printk(KERN_ALERT "Read data is %s\n", temp->data); 
 	}
 	else{
@@ -119,17 +127,24 @@ ssize_t queue_read(struct file *filp, char __user *buf, size_t count,
 	}
 	temp = temp->next;
 	while(temp){
-		strcat (concatenated, temp->data);
+		tempSize = strlen(temp->data);
+		printk(KERN_ALERT "tempSize is: %d \n", tempSize);
+		strncat(concatenated, temp->data, tempSize);
 		printk(KERN_ALERT "Concatenated data is %s\n", temp->data); 
 		temp = temp->next;
 	}
-	
-	if (copy_to_user(buf, concatenated, dev->size_of_data)) {
+	printk(KERN_ALERT "Result data is %s\n", concatenated);
+	flag = copy_to_user(buf, concatenated, dev->size_of_data);
+	printk(KERN_ALERT "Flag value is %d\n", flag);
+	if (flag) {
         retval = -EFAULT;
         goto out;
     }
-	
+    *f_pos += destination_size;
+	retval = destination_size;
 	out:
+	//kfree(temp);
+	//kfree(concatenated);
     up(&dev->sem);
     return retval;
 }
@@ -140,7 +155,6 @@ ssize_t queue_write(struct file *filp, const char __user *buf, size_t count,
 	// Writing to a queue device will insert the written text to the end of the queue.
 	struct node *temp;
 	struct queue_dev *dev = filp->private_data;
-	int flag;
     ssize_t retval = -ENOMEM;
     if (down_interruptible(&dev->sem))
        return -ERESTARTSYS;
@@ -159,9 +173,7 @@ ssize_t queue_write(struct file *filp, const char __user *buf, size_t count,
 	printk(KERN_ALERT "The buffer is %s\n", buf);
 	printk(KERN_ALERT "Its count is %d\n", count);
     // copy buf into temp->data
-    flag = copy_from_user(temp->data, buf, count);
-    printk(KERN_ALERT "copy_from_user flag value is: %d ..\n", flag);
-    if (flag) {
+    if (copy_from_user(temp->data, buf, count)) {
 		printk(KERN_ALERT "copy_from_user error..\n");
         retval = -EFAULT;
         goto out;
@@ -190,6 +202,7 @@ ssize_t queue_write(struct file *filp, const char __user *buf, size_t count,
     dev->size_of_data += count;
     printk(KERN_ALERT "size of data is now : %d \n", dev->size_of_data);
     out:
+    //kfree(temp);
     up(&dev->sem);
     return retval;
 }
