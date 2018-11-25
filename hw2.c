@@ -166,6 +166,7 @@ ssize_t queue_write(struct file *filp, const char __user *buf, size_t count,
         retval = -EFAULT;
         goto out;
     }
+    retval = count;
     printk(KERN_ALERT "Copied data is %s\n", temp->data);        
     if (dev->front == NULL){
 		// first element
