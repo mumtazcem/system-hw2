@@ -1,0 +1,17 @@
+make -C /lib/modules/3.13.0-24-generic/build M=`pwd` modules
+
+rm /dev/q0
+
+rmmod hw2
+
+dmesg -c
+
+insmod ./hw2.ko
+
+dmesg
+
+mknod /dev/q0 c 250 0
+
+echo "mumtaz" > /dev/q0
+
+cat /dev/q0 

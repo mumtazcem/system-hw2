@@ -93,14 +93,14 @@ ssize_t queue_read(struct file *filp, char __user *buf, size_t count,
 	struct node *temp;
 	struct queue_dev *dev = filp->private_data;
 	size_t destination_size, tempSize;
-	int flag;
+	int flag, i;
 	char *concatenated;
 	ssize_t retval = 0;
 	if (down_interruptible(&dev->sem))
         return -ERESTARTSYS;
 	printk(KERN_ALERT "In queue_read\n"); 
     temp = kmalloc(sizeof(struct node), GFP_KERNEL); 
-    concatenated = kmalloc((dev->size_of_data+1) * sizeof(char), GFP_KERNEL);
+    concatenated = kmalloc(dev->size_of_data * sizeof(char), GFP_KERNEL);
 	// copy data
 	destination_size = strlen(dev->front->data);
 	if (*f_pos >= dev->size_of_data) {
@@ -110,7 +110,7 @@ ssize_t queue_read(struct file *filp, char __user *buf, size_t count,
 	printk(KERN_ALERT "destination_size is: %d \n", destination_size);
 	printk(KERN_ALERT "dev->front->data data is %s\n", dev->front->data); 
 	temp->data = kmalloc((destination_size+1) * sizeof(char), GFP_KERNEL);
-	strncpy(temp->data, dev->front->data, destination_size+1);
+	strncpy(temp->data, dev->front->data, destination_size);
 	temp->next = dev->front->next;
 	
 	// concatenate strings
@@ -118,6 +118,10 @@ ssize_t queue_read(struct file *filp, char __user *buf, size_t count,
 		// front is copied
 		tempSize = strlen(temp->data);
 		strncpy(concatenated, temp->data, tempSize);
+		for(i=0;i<tempSize;i++){
+			if(*(concatenated+i) == '\0')
+				*(concatenated+i) = '~';
+		}
 		printk(KERN_ALERT "Read data is %s\n", temp->data); 
 	}
 	else{
@@ -130,9 +134,14 @@ ssize_t queue_read(struct file *filp, char __user *buf, size_t count,
 		tempSize = strlen(temp->data);
 		printk(KERN_ALERT "tempSize is: %d \n", tempSize);
 		strncat(concatenated, temp->data, tempSize);
+		for(i=0;i<tempSize;i++){
+			if(*(concatenated+i) == '\0')
+				*(concatenated+i) = '~';
+		}
 		printk(KERN_ALERT "Concatenated data is %s\n", temp->data); 
 		temp = temp->next;
 	}
+	*(concatenated+dev->size_of_data-1) = '\0';
 	printk(KERN_ALERT "Result data is %s\n", concatenated);
 	flag = copy_to_user(buf, concatenated, dev->size_of_data);
 	printk(KERN_ALERT "Flag value is %d\n", flag);
@@ -143,7 +152,7 @@ ssize_t queue_read(struct file *filp, char __user *buf, size_t count,
     *f_pos += destination_size;
 	retval = destination_size;
 	out:
-	//kfree(temp);
+	//kfree(temp); TODO: make it null first then free it
 	//kfree(concatenated);
     up(&dev->sem);
     return retval;
@@ -162,8 +171,7 @@ ssize_t queue_write(struct file *filp, const char __user *buf, size_t count,
 	printk(KERN_ALERT "In queue_write\n");
     // allocation
     temp = kmalloc(sizeof(struct node), GFP_KERNEL);
-    temp->data = kmalloc(count+1 * sizeof(char), GFP_KERNEL);
-    // memset(temp->data, 0, count * sizeof(char));  NOT SURE IF NECESSARY
+    temp->data = kmalloc(count * sizeof(char), GFP_KERNEL);
     temp->next = NULL;
     // check if it is successful.
     if (!temp->data){
@@ -178,17 +186,15 @@ ssize_t queue_write(struct file *filp, const char __user *buf, size_t count,
         retval = -EFAULT;
         goto out;
     }
+    *(temp->data+count-1) = '\0';
     retval = count;
     printk(KERN_ALERT "Copied data is %s\n", temp->data);        
+    printk(KERN_ALERT "Copied data strlen is %d\n", strlen(temp->data));
     if (dev->front == NULL){
 		// first element
 		printk(KERN_ALERT "First element in the queue..\n");
 		dev->front = kmalloc(sizeof(struct node), GFP_KERNEL);
-		dev->front->next = NULL;
-		dev->front->data = NULL;
 		dev->back = kmalloc(sizeof(struct node), GFP_KERNEL);
-		dev->back->next = NULL;
-		dev->back->data = NULL;
 		dev->front = temp;
 		dev->back = temp;
 	}
