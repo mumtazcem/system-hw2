@@ -92,8 +92,8 @@ ssize_t queue_read(struct file *filp, char __user *buf, size_t count,
 	// When reading from the queue, entries in the queue will behave as concatenated strings.
 	struct node *temp;
 	struct queue_dev *dev = filp->private_data;
-	size_t destination_size, tempSize;
-	int flag, i;
+	size_t destination_size;
+	int i;
 	char *concatenated;
 	ssize_t retval = 0;
 	if (down_interruptible(&dev->sem))
@@ -110,15 +110,14 @@ ssize_t queue_read(struct file *filp, char __user *buf, size_t count,
 	printk(KERN_ALERT "destination_size is: %d \n", destination_size);
 	printk(KERN_ALERT "dev->front->data data is %s\n", dev->front->data); 
 	temp->data = kmalloc((destination_size+1) * sizeof(char), GFP_KERNEL);
-	strncpy(temp->data, dev->front->data, destination_size);
+	strncpy(temp->data, dev->front->data, destination_size+1);
 	temp->next = dev->front->next;
 	
 	// concatenate strings
 	if (temp){
 		// front is copied
-		tempSize = strlen(temp->data);
-		strncpy(concatenated, temp->data, tempSize);
-		for(i=0;i<tempSize;i++){
+		strncpy(concatenated, temp->data, destination_size+1);
+		for(i=0;i<destination_size;i++){
 			if(*(concatenated+i) == '\0')
 				*(concatenated+i) = '~';
 		}
@@ -131,26 +130,26 @@ ssize_t queue_read(struct file *filp, char __user *buf, size_t count,
 	}
 	temp = temp->next;
 	while(temp){
-		tempSize = strlen(temp->data);
-		printk(KERN_ALERT "tempSize is: %d \n", tempSize);
-		strncat(concatenated, temp->data, tempSize);
-		for(i=0;i<tempSize;i++){
+		destination_size = strlen(temp->data);
+		printk(KERN_ALERT "tempSize is: %d \n", destination_size);
+		strncat(concatenated, temp->data, destination_size);
+		for(i=0;i<destination_size;i++){
 			if(*(concatenated+i) == '\0')
 				*(concatenated+i) = '~';
 		}
 		printk(KERN_ALERT "Concatenated data is %s\n", temp->data); 
 		temp = temp->next;
 	}
+	dev->size_of_data = strlen(concatenated)+1;
 	*(concatenated+dev->size_of_data-1) = '\0';
 	printk(KERN_ALERT "Result data is %s\n", concatenated);
-	flag = copy_to_user(buf, concatenated, dev->size_of_data);
-	printk(KERN_ALERT "Flag value is %d\n", flag);
-	if (flag) {
+	printk(KERN_ALERT "dev->size_of_data is: %d \n", dev->size_of_data);
+	if (copy_to_user(buf, concatenated, strlen(concatenated)+1)) {
         retval = -EFAULT;
         goto out;
     }
-    *f_pos += destination_size;
-	retval = destination_size;
+    *f_pos += dev->size_of_data;
+	retval = dev->size_of_data;
 	out:
 	//kfree(temp); TODO: make it null first then free it
 	//kfree(concatenated);
