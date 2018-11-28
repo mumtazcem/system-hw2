@@ -44,9 +44,10 @@ struct queue_dev {
     size_t size_of_data;
     struct semaphore sem;
     struct cdev cdev;
-    /*struct cdev is the kernel’s internal structure that represents char devices; this
-	field contains a pointer to that structure when the inode refers to a char device
-	file.*/
+    /*struct cdev is the kernel’s internal structure
+     *  that represents char devices; this field 
+     * contains a pointer to that structure when 
+     * the inode refers to a char device file.*/
 };
 
 struct queue_dev *queue_devices;
@@ -57,6 +58,7 @@ int delete_queue(struct queue_dev *dev)
     if (dev->front) {
         temp = dev->front;
         while (temp){
+			kfree(temp->data);
 			kfree(temp);
 			if (temp->next)
 				temp = temp->next;
@@ -64,6 +66,7 @@ int delete_queue(struct queue_dev *dev)
 				temp = NULL;
 		}
     }
+    kfree(temp);
     dev->size_of_data = 0;
     return 0;
 }
@@ -151,8 +154,8 @@ ssize_t queue_read(struct file *filp, char __user *buf, size_t count,
     *f_pos += dev->size_of_data;
 	retval = dev->size_of_data;
 	out:
-	//kfree(temp); TODO: make it null first then free it
-	//kfree(concatenated);
+	kfree(temp); 
+	kfree(concatenated);
     up(&dev->sem);
     return retval;
 }
@@ -215,12 +218,46 @@ ssize_t queue_write(struct file *filp, const char __user *buf, size_t count,
 long queue_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 {
 	// There will be an ioctl command named "pop" which will return the entry at the front of the queue and remove it from the queue.
-	return 0;
+	int i;
+	printk(KERN_ALERT "in queue_ioctl..\n");
+	int retval = 0;
+	struct queue_dev *dev = filp->private_data;
+	// error handling
+	if (_IOC_NR(cmd) != 0) return -ENOTTY;
+	if (dev->front == NULL) return -ESPIPE;  // illegal seek
+	/* if queue0 is called set dev 
+	 * as the first existing device
+	 * */ 
+	if (dev == &queue_devices[0]){
+		printk(KERN_ALERT "queue0 is called!..\n");
+		for (i = 1; i < hw2_nr_devs; i++) {
+			dev = &queue_devices[i];
+			if(dev->front != NULL){
+				printk(KERN_ALERT "queue%d is set!..\n", i);
+				break;
+			}
+		}
+	}
+	if (dev->front == NULL) return -ESPIPE;  // second time, just in case
+	printk(KERN_ALERT "The data is about to be popped is %s\n", dev->front->data);
+	printk(KERN_ALERT "Its size is %d\n", strlen(dev->front->data)+1);
+	// copying the data to the user
+	if (copy_to_user((char __user * ) arg, dev->front->data, strlen(dev->front->data)+1)) {
+        retval = -EFAULT;
+        return retval;
+    }
+    retval = strlen(dev->front->data)+1;
+    dev->size_of_data = dev->size_of_data - retval;
+    // pop operation
+    dev->front = dev->front->next;
+    if(dev->front == NULL)
+		dev->back = NULL;
+	return retval;
 }
 
 loff_t queue_llseek(struct file *filp, loff_t off, int whence)
 {
-	/* i think it is not necessary:
+	/* not necessary:
 	The llseek method is used to change the current read/write position in a file, and
 the new position is returned as a (positive) return value*/
 	return 0;
