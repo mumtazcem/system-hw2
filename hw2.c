@@ -96,11 +96,23 @@ ssize_t queue_read(struct file *filp, char __user *buf, size_t count,
 	struct node *temp;
 	struct queue_dev *dev = filp->private_data;
 	size_t destination_size;
-	int i;
 	char *concatenated;
 	ssize_t retval = 0;
 	if (down_interruptible(&dev->sem))
         return -ERESTARTSYS;
+    // if called device is queue0
+    // then no read operation.
+    if (dev == &queue_devices[0]){
+		printk(KERN_ALERT "queue0 is called!..\n");
+		retval = -EINVAL;
+        goto out;
+	}
+	// prevent read operation if front
+	// is null.
+	if (dev->front == NULL){
+		retval = -ESPIPE;
+        goto out;
+	}
 	printk(KERN_ALERT "In queue_read\n"); 
     temp = kmalloc(sizeof(struct node), GFP_KERNEL); 
     concatenated = kmalloc(dev->size_of_data * sizeof(char), GFP_KERNEL);
@@ -120,10 +132,6 @@ ssize_t queue_read(struct file *filp, char __user *buf, size_t count,
 	if (temp){
 		// front is copied
 		strncpy(concatenated, temp->data, destination_size+1);
-		for(i=0;i<destination_size;i++){
-			if(*(concatenated+i) == '\0')
-				*(concatenated+i) = '~';
-		}
 		printk(KERN_ALERT "Read data is %s\n", temp->data); 
 	}
 	else{
@@ -136,10 +144,6 @@ ssize_t queue_read(struct file *filp, char __user *buf, size_t count,
 		destination_size = strlen(temp->data);
 		printk(KERN_ALERT "tempSize is: %d \n", destination_size);
 		strncat(concatenated, temp->data, destination_size);
-		for(i=0;i<destination_size;i++){
-			if(*(concatenated+i) == '\0')
-				*(concatenated+i) = '~';
-		}
 		printk(KERN_ALERT "Concatenated data is %s\n", temp->data); 
 		temp = temp->next;
 	}
@@ -153,9 +157,9 @@ ssize_t queue_read(struct file *filp, char __user *buf, size_t count,
     }
     *f_pos += dev->size_of_data;
 	retval = dev->size_of_data;
-	out:
 	kfree(temp); 
 	kfree(concatenated);
+	out:
     up(&dev->sem);
     return retval;
 }
@@ -167,9 +171,16 @@ ssize_t queue_write(struct file *filp, const char __user *buf, size_t count,
 	struct node *temp;
 	struct queue_dev *dev = filp->private_data;
     ssize_t retval = -ENOMEM;
+    /* error handling */
     if (down_interruptible(&dev->sem))
        return -ERESTARTSYS;
-    
+    // if called device is queue0
+    // then no write operation.
+    if (dev == &queue_devices[0]){
+		printk(KERN_ALERT "queue0 is called!..\n");
+		retval = -EINVAL;
+        goto out;
+	}
 	printk(KERN_ALERT "In queue_write\n");
     // allocation
     temp = kmalloc(sizeof(struct node), GFP_KERNEL);
@@ -224,7 +235,6 @@ long queue_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 	struct queue_dev *dev = filp->private_data;
 	// error handling
 	if (_IOC_NR(cmd) != 0) return -ENOTTY;
-	if (dev->front == NULL) return -ESPIPE;  // illegal seek
 	/* if queue0 is called set dev 
 	 * as the first existing device
 	 * */ 
@@ -238,7 +248,7 @@ long queue_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 			}
 		}
 	}
-	if (dev->front == NULL) return -ESPIPE;  // second time, just in case
+	if (dev->front == NULL) return -ESPIPE;  //  illegal seek
 	printk(KERN_ALERT "The data is about to be popped is %s\n", dev->front->data);
 	printk(KERN_ALERT "Its size is %d\n", strlen(dev->front->data)+1);
 	// copying the data to the user
